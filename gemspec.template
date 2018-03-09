@@ -1,0 +1,20 @@
+# -*- encoding: utf-8 -*-
+
+Gem::Specification.new do |gem|
+  gem.name          = '__GEM_NAME__'
+  gem.version       = ENV.key?('RUBYGEM_VERSION') ? ENV['RUBYGEM_VERSION'] : '0.0.1'
+  gem.authors       = ['__GEM_AUTHOR__']
+  gem.email         = ['oss@hotschedules.com']
+  gem.homepage      = 'https://github.com/hotscheluds/__GEM_NAME__'
+  gem.description   = %q{__GEM_DESCRIPTION__}
+  gem.summary       = %q{__GEM_SUMMARY__}
+  gem.homepage      = 'https://github.com/hotschedules/__GEM_NAME__'
+  gem.license       = 'Apache-2.0'
+  gem.add_runtime_dependency 'fluentd', '>= 0.10.0'
+  gem.files         = `git ls-files`.split("\n")
+  gem.executables   = gem.files.grep(%r{^bin/}) { |f| File.basename(f) }
+  gem.test_files    = gem.files.grep(%r{^(test|spec|features)/})
+  gem.require_paths = ['lib']
+  gem.signing_key   = File.expand_path( ENV.key?('RUBYGEM_SIGNING_KEY') ? ENV['RUBYGEM_SIGNING_KEY'] : '~/certs/oss@hotschedules.com.key' ) if $0 =~ /\bgem[\.0-9]*\z/
+  gem.cert_chain    = %w[certs/oss@hotschedules.com.cert]
+end
