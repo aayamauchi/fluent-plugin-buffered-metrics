@@ -64,7 +64,16 @@ module Fluent
 
     def write(chunk)
 
-      timestamp = Time.now.to_i
+      # The default timestamp really needs to set from the chunk
+      # metadata.  However, there is no way to do this prior to
+      # v0.14.  Putting the the VERSION conditional settitng, but
+      # I don't really have a way to test it, at the moment.
+      if chunk.methods.include?(/metadata/)
+        # This should work for v0.14 and above and is preferable.
+        timestamp = chunk.metadata.timekey.to_f
+      else
+        timestamp = Time.now.to_f
+      end
 
       count_data = {}
       metric_data = {}

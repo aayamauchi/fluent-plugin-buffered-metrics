@@ -188,7 +188,7 @@ module Fluent
         '%s%s %s %i',
         entry.key?('prefix') ? entry['prefix'] + '.' : '',
         entry['name'],entry['value'].to_s,
-        time
+        time.to_i
       )
     end
 
