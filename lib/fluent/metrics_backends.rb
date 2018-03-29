@@ -183,11 +183,10 @@ module Fluent
 
     def serialize_entry(entry,time)
       return sprintf(
-        '%s%s %s %i',
+        '%s%s:%s|c',
         entry.key?('prefix') ? entry['prefix'] + '.' : '',
         entry['name'],
-        ['value'].to_s,
-        time
+        entry['value'].to_i
       )
     end
 
