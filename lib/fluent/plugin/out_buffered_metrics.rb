@@ -45,6 +45,15 @@ module Fluent
 
       @base_entry['prefix'] = @prefix unless @prefix.nil? or @prefix.empty?
 
+      # Back-support the origainal maps strucutres.
+      @counter_maps.each do |k,v|
+        @counter_maps[k] = [ v ] unless v.is_a?(Array)
+      end
+
+      @metric_maps.each do |k,v|
+        @metric_maps[k] = [ v ] unless v.is_a?(Array)
+      end
+
       begin
         backend_name = @metrics_backend
         @metrics_backend = Object.const_get(
@@ -81,23 +90,28 @@ module Fluent
       chunk.msgpack_each do |event|
         @counter_maps.each do |k,v|
           if eval(k)
-            begin
-              name = eval(v) || eval('"'+v+'"')
-            rescue
-              name = eval('"'+v+'"')
+            v.each do |e|
+              begin
+                name = eval(e) || eval('"'+e+'"')
+              rescue
+                name = eval('"'+e+'"')
+              end
+              count_data[name] ||= 0
+              count_data[name] += 1
             end
-            count_data[name] ||= 0
-            count_data[name] += 1
           end
         end
 
         @metric_maps.each do |k,v|
           if eval(k)
-            if eval(v)
-              @metrics_backend.buffer_append_entry(
-                @base_entry.merge(eval(v)),
-                event['time'].to_i
-              )
+            v.each do |e|
+              val = eval(e)
+              if val.is_a?(Hash) and not val.empty?
+                @metrics_backend.buffer_append_entry(
+                  @base_entry.merge(val),
+                  event['time']
+                )
+              end
             end
           end
         end
