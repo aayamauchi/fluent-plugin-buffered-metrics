@@ -7,11 +7,6 @@ module Fluent
       define_method('log') { $log }
     end
 
-    def initialize
-      super
-      require 'fluent/metrics_backends'
-    end
-
     config_param :metrics_backend, :string, :default => 'graphite'
     config_param :url, :string, :default => nil
     config_param :http_headers, :array, :default => []
@@ -29,6 +24,11 @@ module Fluent
     config_param :retry_wait, :time, :default => 1.0
     config_param :max_retry_wait, :time, :default => 5.0
 
+    def initialize
+      super
+      require 'fluent/metrics_backends'
+    end
+
     def configure(conf)
       super(conf) {
         @url = conf.delete('url')
@@ -43,23 +43,18 @@ module Fluent
 
       @base_entry = {}
 
-      unless @prefix.nil? do
-        # Hack needed since I have a specific issue where I cannot
-        # get the prefix set correctly in the configuration in an
-        # automated way.
-     
+      unless @prefix.nil?
+
         begin
           @prefix = eval(@prefix) || eval('"'+@prefix+'"')
-        rescue e
-         raise ArgumentError, "Error initializing metrics backend #{backend_name}"
+        rescue
+          raise ArgumentError, "Error setting prefix from '#{@prefix}'"
         end
-      
+
         @base_entry['prefix'] = @prefix unless @prefix.empty?
 
       end
 
-
-      # Back-support the origainal maps strucutres.
       @counter_maps.each do |k,v|
         @counter_maps[k] = [ v ] unless v.is_a?(Array)
       end
@@ -75,7 +70,7 @@ module Fluent
         ).new(@url,@http_headers)
 
       rescue => e
-        $log.error "Error initializing metrics backend #{backend_name}"
+        log.error "Error initializing metrics backend #{backend_name}"
         raise e
       end
 
@@ -106,8 +101,8 @@ module Fluent
           if eval(k)
             v.each do |e|
               begin
-                name = eval(e) || eval('"'+e+'"')
-              rescue
+                name = eval(e)
+              rescue Exception
                 name = eval('"'+e+'"')
               end
               count_data[name] ||= 0
@@ -151,10 +146,10 @@ module Fluent
     end
 
     def write(chunk)
-      # The BufferedOuput has a built-in retry mechanism.  Do not
-      # overwrite buffer content if it already exists -- assume
-      # the call must be a retry attempt.
 
+      # The superclass BufferedOutput provides the retry logic.  If the
+      # buffer already has content this must be a retry after a failed
+      # flush, so don't re-scan the chunk for the metrics.
       derive_metrics(chunk) unless @metrics_backend.buffer?
       @metrics_backend.buffer_flush if @metrics_backend.buffer?
 
