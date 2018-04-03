@@ -14,27 +14,34 @@ module Fluent
 
     config_param :metrics_backend, :string, :default => 'graphite'
     config_param :url, :string, :default => nil
+    config_param :http_headers, :array, :default => []
     config_param :prefix, :string, :default => nil
     config_param :instance_id, :string, :default => nil
     config_param :counter_maps, :hash, :default => {}
     config_param :counter_defaults, :array, :default => []
     config_param :metric_maps, :hash, :default => {}
     config_param :metric_defaults, :array, :default => []
-    config_param :retries, :hash, :default => { 'max' => 4, 'wait' => '1s' }
+
+    # The following are overrides for the paramaters inherited from
+    # the superclass to them more sensible defaults. Since this is
+    # likely to be run farily frequently, don't allow for long waits.
+    config_param :retry_limit, :integer, :default => 4
+    config_param :retry_wait, :time, :default => 1.0
+    config_param :max_retry_wait, :time, :default => 5.0
 
     def configure(conf)
       super(conf) {
         @url = conf.delete('url')
+        @http_headers = conf.delete('http_headers')
         @metrics_backend = conf.delete('metrics_backend')
         @prefix = conf.delete('prefix')
         @counter_maps = conf.delete('counter_maps')
         @counter_defaults = conf.delete('counter_defaults')
         @metric_maps = conf.delete('metric_maps')
         @metric_defaults = conf.delete('metric_defaults')
-        @retries = conf.delete('retries')
       }
 
-      @base_entry = { }
+      @base_entry = {}
 
       @base_entry['prefix'] = @prefix unless @prefix.nil? or @prefix.empty?
 
@@ -42,32 +49,25 @@ module Fluent
         backend_name = @metrics_backend
         @metrics_backend = Object.const_get(
           sprintf('Fluent::MetricsBackend%s',backend_name.capitalize)
-        ).new
-      rescue => e
-        @router.emit_error_event(tag, Engine.now, {'time' => time, 'record' => record}, e)
-      end
+        ).new(@url,@http_headers)
 
-      begin
-        @metrics_backend.set_connection_parameters(@url)
       rescue => e
-        $log.error "Unable to set connection parameters from #{@url}."
+        $log.error "Error initializing metrics backend #{backend_name}"
         raise e
       end
 
     end
 
     def format(tag, time, record)
-      # This is the formatter for entries getting added to the buffer,
-      # not the formatter for metric data.
       { 'tag' => tag, 'time' => time, 'record' => record }.to_msgpack
     end
 
-    def write(chunk)
-
+    def derive_metrics(chunk)
       # The default timestamp really needs to set from the chunk
       # metadata.  However, there is no way to do this prior to
       # v0.14.  Putting the the VERSION conditional settitng, but
       # I don't really have a way to test it, at the moment.
+
       if chunk.methods.include?(/metadata/)
         # This should work for v0.14 and above and is preferable.
         timestamp = chunk.metadata.timekey.to_f
@@ -108,31 +108,29 @@ module Fluent
         count_data[e['name']] = e['value'] unless count_data.key?(e['name'])
       end
 
-      count_data.each do |name,value|
-        @metrics_backend.buffer_append_entry(
-          @base_entry.merge({ 'name' => name, 'value' => value }),
-          timestamp
-        )
-      end
+      @metrics_backend.buffer_append_array_of_hashes(
+        count_data.map {|name,value|
+          @base_entry.merge({ 'name' => name, 'value' => value, 'time' => timestamp })
+        }
+      )
 
-      @metric_defaults.each do |e|
-        if not metric_data.key?(e['name'])
-          @metrics_backend.buffer_append_entry(
-            @base_entry.merge(e),
-            timestamp
-          )
-        end
-      end
-
-      if @metrics_backend.buffer?
-        @metrics_backend.buffer_flush(retries)
-      end
+      @metrics_backend.buffer_append_array_of_hashes(
+         @metric_defaults.map {|e|
+           @base_entry.merge(e).merge({'time' => timestamp}) unless metric_data.key?(e['name'])
+         }
+      )
 
     end
 
-    # The module started life posting to the Stackdriver API.  Reformulate
-    # and push in Graphite API format instead of having to reformulate all
-    # of the parsing.
+    def write(chunk)
+      # The BufferedOuput has a built-in retry mechanism.  Do not
+      # overwrite buffer content if it already exists -- assume
+      # the call must be a retry attempt.
+
+      derive_metrics(chunk) unless @metrics_backend.buffer?
+      @metrics_backend.buffer_flush if @metrics_backend.buffer?
+
+    end
 
   end
 end

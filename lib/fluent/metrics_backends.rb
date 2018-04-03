@@ -1,122 +1,111 @@
 module Fluent
 
-# IN PROGRESS #   class HTTPPOSTSocket
-# IN PROGRESS #     # Make a class to add add socket IO methoos for HTTP/HTTPS
-# IN PROGRESS #     # POSTs -- # mostly so the output buffer output methods do
-# IN PROGRESS #     # not have to conditionally swithc method based on proto.
-# IN PROGRESS #
-# IN PROGRESS #     require 'net/http'
-# IN PROGRESS #
-# IN PROGRESS #     def initialize(connection_parameters)
-# IN PROGRESS #       @parameters = connection_parameters
-# IN PROGRESS #       @headers = @connection_parameters.delete('headers') || {}
-# IN PROGRESS #
-# IN PROGRESS #       @conn = Net::HTTP.new(@parameters['host'],@parameters['port'])
-# IN PROGRESS #       @req = Net::HTTP::Post.new(@parameters['host'],@headers)
-# IN PROGRESS #
-# IN PROGRESS #       if proto == 'https'
-# IN PROGRESS #         require 'net/https'
-# IN PROGRESS #         @conn.use_ssl = true
-# IN PROGRESS #       end
-# IN PROGRESS #     end
-# IN PROGRESS #
-# IN PROGRESS #     def write(serialized_data)
-# IN PROGRESS #       @req.body = serialized_data
-# IN PROGRESS #       response = @conn.request(@req)
-# IN PROGRESS #       # Wheat do we do, here?
-# IN PROGRESS #     end
-# IN PROGRESS #
-# IN PROGRESS #   end
+  class SocketLike
+    # Just a little something to try to make any possible output
+    # bakced act like a socket so we don't have to check the type
+    # and change method colls throughout the code.
 
-  class MetricsBackend
+    def open
+      if @parameters.nil? or @parameters.empty?
+        raise RuntimeError, "SocketLike open called with no parameters set"
+      else
+        if @parameters['proto'] == 'tcp'
+          @socket = TCPSocket.new(
+            @parameters['host'],
+            @parameters['port']
+          )
+        elsif @parameters['proto'] == 'udp'
+          @socket = UDPSocket.new(
+            @parameters['host'],
+            @parameters['port']
+          )
+        elsif @parameters['proto'] == 'unix'
+          @socket = UNIXsocket.new(@parameters['path'])
+        elsif @parameters['proto'] == 'file'
+          @socket = File.open(@parameters['path'],'a')
+        elsif @parameters['proto'] =~ /^http/
+          @socket = Net::HTTP.new(@parameters['host'],@parameters['port'])
+          @socket.use_ssl = @parameters['proto'] == 'https'
+        else
+          raise ArgumentError, 'SocketLike class does not support protocol' + @parameters['proto']
+        end
+      end
 
-    unless method_defined?(:log)
-      define_method('log') { $log }
-    end
+      def write(string)
+        if @parameters['proto'] =~ /^http/
+          req = Net::HTTP::Post.new(@parameters['path'])
+          req.body = string
+          @parameters['headers'].each do |h|
+            req.add_field(h[0],h[1])
+          end
+          #@socket.request(req) or raise IOError "Error writing to backend"
+          @socket.request(req)
+        else
+          #@socket.write(string) or raise IOError "Error writing to backend"
+          @socket.write(string)
+        end
+      end
 
-    def get_connection_parameters_defaults
-      return {}
-    end
-
-    def set_connection_parameters(url)
-      @url = url
-      @connection_parameters = get_connection_parameters_defaults
-      return if @url.nil? or @url.empty?
-      @url.split(':').each_with_index do |val,i|
-        if i == 0
-          @connection_parameters['proto'] = val
-        elsif i == 1
-          @connection_parameters['location'] = val.slice(2..-1)
-        elsif i == 2
-          # WORK IN PROGRESS -- we have forgotten to check for a path.
-          @connection_parameters['port'] = val
+      def close
+        if @parameters['proto'] =~ /^http/
+          @socket.finish
+        else
+          @socket.close
         end
       end
 
     end
 
-    def initialize(url = nil)
-      @output_buffer = []
-      @socket = nil
-      set_connection_parameters(url)
+    def initialize(parameters)
+      @parameters = parameters
+      if @parameters['proto'] =~ /^http/
+        require 'net/http'
+        require 'net/https' if @paramters['proto'] == 'https'
+      end
     end
 
-    def connection_open
-      begin
-        if @connection_parameters['proto'] == 'tcp'
-          @connection = TCPSocket.new(
-            @connection_parameters['location'],
-            @connection_parameters['port']
-          )
-        elsif @connection_parameters['proto'] == 'udp'
-          @connection = UDPSocket.new(
-            @connection_parameters['location'],
-            @connection_parameters['port']
-          )
-        elsif @connection_parameters['proto'] == 'unix'
-          @connection = UNIXsocket.new(@connection_parameters['location'])
-        elsif @connection_parameters['proto'] == 'file'
-          @connection = File.open(@connection_parameters['location'],'a')
-        else
-          raise ArgumentError, sprintf('Protocol "%s" is not supported',@connection_parameters['proto'])
-        end
-      rescue ArgumentError => e
-        log.error e.message
+  end
 
+  class MetricsBackend
+
+    def get_connection_parameters_defaults
+      # This should be overriden in any any subclass.
+      return {}
+    end
+
+    def set_connection_parameters(url,headers = [])
+      @connection_parameters = get_connection_parameters_defaults
+      @connection_parameters.merge!(
+        Hash[['proto','host','port','path'].zip(
+          url.match(/^([^:]*):\/\/([^:\/]*):?(\d*)(\/.*)?/).to_a.map {|e| e.nil? or e.empty? ? nil : e }[1..-1]
+        )]
+      ) unless url.nil? or url.empty?
+      @connection_parameters['headers'] ||= []
+      @connection_parameters['headers'] += headers
+    end
+
+    def initialize(url = nil,headers = [])
+      @output_buffer = []
+      set_connection_parameters(url, headers)
+      @connection = SocketLike.new(@connection_parameters)
     end
 
     def buffer_join(buffer)
       # Allw this to be overridable to facitatte formats such as
-      # JSON -- in partficuler, dealing with commas.  The default
-      # is EOL delimieted with a trailing EOL
-
+      # multiliine formats, or things JSON where there are
+      # punctuation differences depending upon position.
       buffer.join("\n") + "\n"
     end
 
-    def buffer_flush(retries = {})
-      retries = { 'max' => 4, 'wait' => 1 }.update(retries)
-      # For now, every possible type of socket has a write method.
-      # We also have nothing persistent, so open and close it.
+    def buffer_flush
 
       begin
         @connection.open
         @connection.write(buffer_join(@output_buffer))
+      rescue
+        raise
+      ensure
         @connection.close
-      rescue Errno::ETIMEDOUT
-        if trial <= @max_retries
-          log.warn "out_buffered_metrics: connection timeout to #{@url}. Reconnecting... "
-          trial += 1
-          connect_client!
-          retry
-        else
-          log.error "out_buffered_metrics: ERROR: connection timeout to #{@url}. Exceeded max_retries #{@max_retries}"
-        end
-      rescue Errno::ECONNREFUSED
-        log.warn "out_buffered_metrics: connection refused by #{@url}"
-      rescue SocketError => se
-        log.warn "out_buffered_metrics: socket error by #{@url} :#{se}"
-      rescue StandardError => e
-        log.error "out_buffered_metrics: ERROR: #{e}"
       end
 
       @output_buffer = []
@@ -130,18 +119,6 @@ module Fluent
       raise NoMethodError, 'The serialize_entry method has not been specified.'
     end
 
-    def serialize_array_of_values(data)
-      data.each do |e|
-        @output_buffer << serialize_entry(e[0],e[1])
-      end
-    end
-
-    def serialize_array_of_hashes(data)
-      data.each do |e|
-        @output_buffer << serialize_entry(e,e['time'])
-      end
-    end
-
     def serialize_array(data)
       return if data.empty?
       if data[0].is_a?(Hash)
@@ -149,7 +126,7 @@ module Fluent
       elsif data[0].is_a?(Array)
         return serialize_array_of_arrays(data)
       else
-        puts 'we should not be here'
+        raise ArgumentError, 'serialize_array method input must be of Hash or Array type'
       end
     end
 
@@ -159,8 +136,16 @@ module Fluent
       elsif data.is_a(Array)
         return serialize_array(data)
       else
-        puts 'we should not be here'
+        raise ArgumentError, 'serialize method input must be of Hash or Array type'
       end
+    end
+
+    def buffer_append_array_of_values(data)
+      @output_buffer += data.map {|e| serialize_entry(e[0],e[1]) }
+    end
+
+    def buffer_append_array_of_hashes(data)
+      @output_buffer += data.map {|e| serialize_entry(e,e['time']) }
     end
 
     def buffer_append(data)
@@ -176,11 +161,7 @@ module Fluent
   class MetricsBackendGraphite < MetricsBackend
 
     def get_connection_parameters_defaults
-      return {
-        'proto' => 'tcp',
-        'location' => 'localhost',
-        'port' => 2003
-      }
+      return { 'proto' => 'tcp', 'host' => 'localhost', 'port' => 2003 }
     end
 
     def serialize_entry(entry,time)
@@ -197,11 +178,7 @@ module Fluent
   class MetricsBackendStatsd < MetricsBackend
 
     def get_connection_parameters_defaults
-      return {
-        'proto' => 'udp',
-        'location' => 'localhost',
-        'port' => 8215
-      }
+      return { 'proto' => 'udp', 'host' => 'localhost', 'port' => 8215 }
     end
 
     def serialize_entry(entry,time)
