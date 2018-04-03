@@ -43,7 +43,21 @@ module Fluent
 
       @base_entry = {}
 
-      @base_entry['prefix'] = @prefix unless @prefix.nil? or @prefix.empty?
+      unless @prefix.nil? do
+        # Hack needed since I have a specific issue where I cannot
+        # get the prefix set correctly in the configuration in an
+        # automated way.
+     
+        begin
+          @prefix = eval(@prefix) || eval('"'+@prefix+'"')
+        rescue e
+         raise ArgumentError, "Error initializing metrics backend #{backend_name}"
+        end
+      
+        @base_entry['prefix'] = @prefix unless @prefix.empty?
+
+      end
+
 
       # Back-support the origainal maps strucutres.
       @counter_maps.each do |k,v|
