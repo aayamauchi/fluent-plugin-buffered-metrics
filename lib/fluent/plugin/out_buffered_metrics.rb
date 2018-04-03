@@ -1,14 +1,14 @@
 module Fluent
-  class GraphiteMetricsOutput < BufferedOutput
+  class BufferedMetricsOutput < BufferedOutput
 
-    Plugin.register_output('graphite_metrics', self)
+    Plugin.register_output('buffered_metrics', self)
 
     def initialize
       super
-      require 'fluent/metrics_serializer'
+      require 'fluent/metrics_backends'
     end
 
-    config_param :metric_format, :string, :default => 'graphite'
+    config_param :metrics_backend, :string, :default => 'graphite'
     config_param :url, :string, :default => nil
     config_param :prefix, :string, :default => nil
     config_param :instance_id, :string, :default => nil
@@ -20,7 +20,7 @@ module Fluent
     def configure(conf)
       super(conf) {
         @url = conf.delete('url')
-        @metric_format = conf.delete('metric_format')
+        @metrics_backend = conf.delete('metrics_backend')
         @prefix = conf.delete('prefix')
         @counter_maps = conf.delete('counter_maps')
         @counter_defaults = conf.delete('counter_defaults')
@@ -28,25 +28,24 @@ module Fluent
         @metric_defaults = conf.delete('metric_defaults')
       }
 
-      #@metrics_serializer = MetricsSerializer.instance_method(@metrics_format)
-
       @base_entry = { }
 
       @base_entry['prefix'] = @prefix unless @prefix.nil? or @prefix.empty?
 
       begin
+        backend_name = @metrics_backend
         @metrics_backend = Object.const_get(
-          sprintf('Fluent::MetricsBackend%s',@metric_format.capitalize)
+          sprintf('Fluent::MetricsBackend%s',backend_name.capitalize)
         ).new
       rescue => e
-        $log.error "MetricsBackend cless for #{@metric_format} could not be instantiated."
+        $log.error "MetricsBackend cless for #{backend_name} could not be instantiated."
         raise e
       end
 
       begin
         @metrics_backend.set_connection_parameters(@url)
       rescue => e
-        $log.err "Unable to set connection paramaters from #{@url}."
+        $log.error "Unable to set connection parameters from #{@url}."
         raise e
       end
 
@@ -81,9 +80,6 @@ module Fluent
         @metric_maps.each do |k,v|
           if eval(k)
             if eval(v)
-#              @metrics_backend.buffer_append_entry(
-#                @base_entry.merge({ 'collected_at' => event['time'].to_i }).merge(eval(v))
-#              )
               @metrics_backend.buffer_append_entry(
                 @base_entry.merge(eval(v)),
                 event['time'].to_i
@@ -114,10 +110,10 @@ module Fluent
         end
       end
 
-      if @metric_backend.buffer?
-        @metric_backend.connection_open
-        @metric_backend.buffer_flush
-        @metric_backend.connection_close
+      if @metrics_backend.buffer?
+        @metrics_backend.connection_open
+        @metrics_backend.buffer_flush
+        @metrics_backend.connection_close
       end
 
     end

@@ -1,5 +1,33 @@
 module Fluent
 
+# IN PROGRESS #   class HTTPPOSTSocket
+# IN PROGRESS #     # Make a class to add add socket IO methoos for HTTP/HTTPS
+# IN PROGRESS #     # POSTs -- # mostly so the output buffer output methods do
+# IN PROGRESS #     # not have to conditionally swithc method based on proto.
+# IN PROGRESS #
+# IN PROGRESS #     require 'net/http'
+# IN PROGRESS #
+# IN PROGRESS #     def initialize(connection_parameters)
+# IN PROGRESS #       @parameters = connection_parameters
+# IN PROGRESS #       @headers = @connection_parameters.delete('headers') || {}
+# IN PROGRESS #
+# IN PROGRESS #       @conn = Net::HTTP.new(@parameters['host'],@parameters['port'])
+# IN PROGRESS #       @req = Net::HTTP::Post.new(@parameters['host'],@headers)
+# IN PROGRESS #
+# IN PROGRESS #       if proto == 'https'
+# IN PROGRESS #         require 'net/https'
+# IN PROGRESS #         @conn.use_ssl = true
+# IN PROGRESS #       end
+# IN PROGRESS #     end
+# IN PROGRESS #
+# IN PROGRESS #     def write(serialized_data)
+# IN PROGRESS #       @req.body = serialized_data
+# IN PROGRESS #       response = @conn.request(@req)
+# IN PROGRESS #       # Wheat do we do, here?
+# IN PROGRESS #     end
+# IN PROGRESS #
+# IN PROGRESS #   end
+
   class MetricsBackend
 
     def get_connection_parameters_defaults
@@ -15,6 +43,7 @@ module Fluent
         elsif i == 1
           @connection_parameters['location'] = val.slice(2..-1)
         elsif i == 2
+          # WORK IN PROGRESS -- we have forgotten to check for a path.
           @connection_parameters['port'] = val
         end
       end
@@ -49,7 +78,7 @@ module Fluent
 
     end
 
-    def close
+    def connection_close
       # For now, every possible type of socket has a close method.
       @connection.close
       @connection = nil
