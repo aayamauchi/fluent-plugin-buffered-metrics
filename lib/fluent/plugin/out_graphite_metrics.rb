@@ -5,11 +5,11 @@ module Fluent
 
     def initialize
       super
+      require 'fluent/metrics_serializer'
     end
 
+    config_param :metric_format, :string, :default => 'graphite'
     config_param :url, :string, :default => nil
-    config_param :socket_settings, :hash,
-      :default => { 'proto' => 'tcp', 'location' => 'localhost', 'port' => 12003 }
     config_param :prefix, :string, :default => nil
     config_param :instance_id, :string, :default => nil
     config_param :counter_maps, :hash, :default => {}
@@ -20,7 +20,7 @@ module Fluent
     def configure(conf)
       super(conf) {
         @url = conf.delete('url')
-        @socket_settings = conf.delete('socket_settings')
+        @metric_format = conf.delete('metric_format')
         @prefix = conf.delete('prefix')
         @counter_maps = conf.delete('counter_maps')
         @counter_defaults = conf.delete('counter_defaults')
@@ -28,50 +28,39 @@ module Fluent
         @metric_defaults = conf.delete('metric_defaults')
       }
 
-      # I'd really prefer using an url specification.
-      unless @url.nil? or @url.empty?
-        @url.split(':').each_with_index do |val,i|
-          if i == 0
-            @socket_settings['proto'] = val
-          elsif i == 1
-            @socket_settings['location'] = val.slice(2..-1)
-          elsif i == 2
-            @socket_settings['port'] = val
-          end
-        end
-      end
+      #@metrics_serializer = MetricsSerializer.instance_method(@metrics_format)
 
       @base_entry = { }
 
       @base_entry['prefix'] = @prefix unless @prefix.nil? or @prefix.empty?
 
-      if ['udp','tcp','unix'].include?(@socket_settings['proto'])
-        require 'socket'
-        @socket_settings['port'] ||= 12003 unless @socket_settings['proto'] == 'unix'
+      begin
+        @metrics_backend = Object.const_get(
+          sprintf('Fluent::MetricsBackend%s',@metric_format.capitalize)
+        ).new
+      rescue => e
+        $log.error "MetricsBackend cless for #{@metric_format} could not be instantiated."
+        raise e
       end
 
-    end
-
-    def encoding_workaround(data)
-      data.each do |k,v|
-        if v.is_a?(String)
-          data[k] = v.force_encoding('UTF-8')
-        elsif v.is_a?(Hash) or v.is_a?(Array)
-          data[k] = encoding_workaround(v)
-        end
+      begin
+        @metrics_backend.set_connection_parameters(@url)
+      rescue => e
+        $log.err "Unable to set connection paramaters from #{@url}."
+        raise e
       end
 
-      return data
     end
 
     def format(tag, time, record)
+      # This is the formatter for entries getting added to the buffer,
+      # not the formatter for metric data.
       { 'tag' => tag, 'time' => time, 'record' => record }.to_msgpack
     end
 
     def write(chunk)
 
       timestamp = Time.now.to_i
-      data = []
 
       count_data = {}
       metric_data = {}
@@ -92,7 +81,13 @@ module Fluent
         @metric_maps.each do |k,v|
           if eval(k)
             if eval(v)
-              data << @base_entry.merge({ 'collected_at' => event['time'].to_i }).merge(eval(v))
+#              @metrics_backend.buffer_append_entry(
+#                @base_entry.merge({ 'collected_at' => event['time'].to_i }).merge(eval(v))
+#              )
+              @metrics_backend.buffer_append_entry(
+                @base_entry.merge(eval(v)),
+                event['time'].to_i
+              )
             end
           end
         end
@@ -104,20 +99,26 @@ module Fluent
       end
 
       count_data.each do |name,value|
-        data << @base_entry.merge({
-          'name' => name,
-          'value' => value,
-          'collected_at' => timestamp
-        })
+        @metrics_backend.buffer_append_entry(
+          @base_entry.merge({ 'name' => name, 'value' => value }),
+          timestamp
+        )
       end
 
       @metric_defaults.each do |e|
         if not metric_data.key?(e['name'])
-          data << @base_entry.merge({'collected_at' => timestamp}).merge(e)
+          @metrics_backend.buffer_append_entry(
+            @base_entry.merge(e),
+            timestamp
+          )
         end
       end
 
-      post(serialize(data)) unless data.empty?
+      if @metric_backend.buffer?
+        @metric_backend.connection_open
+        @metric_backend.buffer_flush
+        @metric_backend.connection_close
+      end
 
     end
 
@@ -126,16 +127,7 @@ module Fluent
     # of the parsing.
 
     def serialize(data)
-      # Make a stand-alone serializer so that it's a trivial matter to
-      # respecify for a different metrics collecting backend.
-      ret_val = ''
-      data.group_by{|e| e['collected_at']}.sort.each do |t,vals|
-        vals.each do |e|
-          ret_val += sprintf("%s%s %s %i\n",e.key?('prefix') ? e['prefix'] + '.' : '',e['name'],e['value'].to_s,t)
-        end
-      end
-
-      return ret_val
+      @metrics_backend.serialize_array_of_hashes(data)
     end
 
     def post(serialized_data)
@@ -158,5 +150,4 @@ module Fluent
     end
 
   end
-
 end
