@@ -3,6 +3,10 @@ module Fluent
 
     Plugin.register_output('buffered_metrics', self)
 
+    unless method_defined?(:log)
+      define_method('log') { $log }
+    end
+
     def initialize
       super
       require 'fluent/metrics_backends'
@@ -16,6 +20,7 @@ module Fluent
     config_param :counter_defaults, :array, :default => []
     config_param :metric_maps, :hash, :default => {}
     config_param :metric_defaults, :array, :default => []
+    config_param :retries, :hash, :default => { 'max' => 4, 'wait' => '1s' }
 
     def configure(conf)
       super(conf) {
@@ -26,6 +31,7 @@ module Fluent
         @counter_defaults = conf.delete('counter_defaults')
         @metric_maps = conf.delete('metric_maps')
         @metric_defaults = conf.delete('metric_defaults')
+        @retries = conf.delete('retries')
       }
 
       @base_entry = { }
@@ -38,8 +44,7 @@ module Fluent
           sprintf('Fluent::MetricsBackend%s',backend_name.capitalize)
         ).new
       rescue => e
-        $log.error "MetricsBackend cless for #{backend_name} could not be instantiated."
-        raise e
+        @router.emit_error_event(tag, Engine.now, {'time' => time, 'record' => record}, e)
       end
 
       begin
@@ -111,9 +116,7 @@ module Fluent
       end
 
       if @metrics_backend.buffer?
-        @metrics_backend.connection_open
-        @metrics_backend.buffer_flush
-        @metrics_backend.connection_close
+        @metrics_backend.buffer_flush(retries)
       end
 
     end
@@ -121,29 +124,6 @@ module Fluent
     # The module started life posting to the Stackdriver API.  Reformulate
     # and push in Graphite API format instead of having to reformulate all
     # of the parsing.
-
-    def serialize(data)
-      @metrics_backend.serialize_array_of_hashes(data)
-    end
-
-    def post(serialized_data)
-
-      if @socket_settings['proto'] == 'tcp'
-        sock = TCPSocket.new(@socket_settings['location'], @socket_settings['port'])
-      elsif @socket_settings['proto'] == 'udp'
-        sock = UDPSocket.new(@socket_settings['location'], @socket_settings['port'])
-      elsif @socket_settings['proto'] == 'unix'
-        sock = UNIXsocket.new(@socket_settings['location'])
-      elsif @socket_settings['proto'] == 'file'
-        sock = File.open(@socket_settings['location'],'a')
-      else
-        $log.error "socket_settings is not defined"
-      end
-
-      sock.write(serialized_data)
-      sock.close()
-
-    end
 
   end
 end

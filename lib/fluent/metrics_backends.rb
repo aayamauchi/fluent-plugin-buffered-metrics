@@ -30,14 +30,19 @@ module Fluent
 
   class MetricsBackend
 
+    unless method_defined?(:log)
+      define_method('log') { $log }
+    end
+
     def get_connection_parameters_defaults
       return {}
     end
 
     def set_connection_parameters(url)
+      @url = url
       @connection_parameters = get_connection_parameters_defaults
-      return if url.nil? or url.empty?
-      url.split(':').each_with_index do |val,i|
+      return if @url.nil? or @url.empty?
+      @url.split(':').each_with_index do |val,i|
         if i == 0
           @connection_parameters['proto'] = val
         elsif i == 1
@@ -51,45 +56,70 @@ module Fluent
     end
 
     def initialize(url = nil)
-      @output_buffer = ''
+      @output_buffer = []
       @socket = nil
       set_connection_parameters(url)
     end
 
     def connection_open
-      if @connection_parameters['proto'] == 'tcp'
-        @connection = TCPSocket.new(
-          @connection_parameters['location'],
-          @connection_parameters['port']
-        )
-      elsif @connection_parameters['proto'] == 'udp'
-        @connection = UDPSocket.new(
-          @connection_parameters['location'],
-          @connection_parameters['port']
-        )
-      elsif @connection_parameters['proto'] == 'unix'
-        @connection = UNIXsocket.new(@connection_parameters['location'])
-      elsif @connection_parameters['proto'] == 'file'
-        @connection = File.open(@connection_parameters['location'],'a')
-      else
-        puts 'we should never be here'
-        #$log.error "connection_parameters is not defined"
+      begin
+        if @connection_parameters['proto'] == 'tcp'
+          @connection = TCPSocket.new(
+            @connection_parameters['location'],
+            @connection_parameters['port']
+          )
+        elsif @connection_parameters['proto'] == 'udp'
+          @connection = UDPSocket.new(
+            @connection_parameters['location'],
+            @connection_parameters['port']
+          )
+        elsif @connection_parameters['proto'] == 'unix'
+          @connection = UNIXsocket.new(@connection_parameters['location'])
+        elsif @connection_parameters['proto'] == 'file'
+          @connection = File.open(@connection_parameters['location'],'a')
+        else
+          raise ArgumentError, sprintf('Protocol "%s" is not supported',@connection_parameters['proto'])
+        end
+      rescue ArgumentError => e
+        log.error e.message
+
+    end
+
+    def buffer_join(buffer)
+      # Allw this to be overridable to facitatte formats such as
+      # JSON -- in partficuler, dealing with commas.  The default
+      # is EOL delimieted with a trailing EOL
+
+      buffer.join("\n") + "\n"
+    end
+
+    def buffer_flush(retries = {})
+      retries = { 'max' => 4, 'wait' => 1 }.update(retries)
+      # For now, every possible type of socket has a write method.
+      # We also have nothing persistent, so open and close it.
+
+      begin
+        @connection.open
+        @connection.write(buffer_join(@output_buffer))
+        @connection.close
+      rescue Errno::ETIMEDOUT
+        if trial <= @max_retries
+          log.warn "out_buffered_metrics: connection timeout to #{@url}. Reconnecting... "
+          trial += 1
+          connect_client!
+          retry
+        else
+          log.error "out_buffered_metrics: ERROR: connection timeout to #{@url}. Exceeded max_retries #{@max_retries}"
+        end
+      rescue Errno::ECONNREFUSED
+        log.warn "out_buffered_metrics: connection refused by #{@url}"
+      rescue SocketError => se
+        log.warn "out_buffered_metrics: socket error by #{@url} :#{se}"
+      rescue StandardError => e
+        log.error "out_buffered_metrics: ERROR: #{e}"
       end
 
-    end
-
-    def connection_close
-      # For now, every possible type of socket has a close method.
-      @connection.close
-      @connection = nil
-    end
-
-    def buffer_flush
-      # For now, every possible type of socket has a write method.
-      # We also have nothing persistent, so open and closet it.
-
-      @connection.write(@output_buffer)
-      @output_buffer = ''
+      @output_buffer = []
     end
 
     def buffer?
@@ -97,28 +127,23 @@ module Fluent
     end
 
     def serialize_entry(entry,time)
-      # This _must_ be set in any subclasse.
-      nil
+      raise NoMethodError, 'The serialize_entry method has not been specified.'
     end
 
     def serialize_array_of_values(data)
-      ret_val = ''
       data.each do |e|
-        ret_val += serialize_entry(e[0],e[1])
+        @output_buffer << serialize_entry(e[0],e[1])
       end
-      return ret_val
     end
 
     def serialize_array_of_hashes(data)
-      ret_val = ''
       data.each do |e|
-        ret_val += serialize_entry(e,e['time'])
+        @output_buffer << serialize_entry(e,e['time'])
       end
-      return ret_val
     end
 
     def serialize_array(data)
-      return ''  if data.empty?
+      return if data.empty?
       if data[0].is_a?(Hash)
         return serialize_array_of_hashes(data)
       elsif data[0].is_a?(Array)
@@ -136,15 +161,14 @@ module Fluent
       else
         puts 'we should not be here'
       end
-      return ret_val
     end
 
     def buffer_append(data)
-      @output_buffer += serialize(data)
+      @output_buffer << serialize(data)
     end
 
     def buffer_append_entry(entry,time)
-      @output_buffer += serialize_entry(entry,time)
+      @output_buffer << serialize_entry(entry,time)
     end
 
   end
@@ -161,7 +185,7 @@ module Fluent
 
     def serialize_entry(entry,time)
       return sprintf(
-        "%s%s %s %i\n",
+        '%s%s %s %i',
         entry.key?('prefix') ? entry['prefix'] + '.' : '',
         entry['name'],entry['value'].to_s,
         time
@@ -182,7 +206,7 @@ module Fluent
 
     def serialize_entry(entry,time)
       return sprintf(
-        "%s%s %s %i\n",
+        '%s%s %s %i',
         entry.key?('prefix') ? entry['prefix'] + '.' : '',
         entry['name'],
         ['value'].to_s,
