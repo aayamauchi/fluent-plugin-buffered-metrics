@@ -12,8 +12,8 @@ module Fluent
     config_param :http_headers, :array, :default => []
     config_param :prefix, :string, :default => nil
     config_param :instance_id, :string, :default => nil
-    config_param :counter_maps, :hash, :default => {}
-    config_param :counter_defaults, :array, :default => []
+    config_param :sum_maps, :hash, :default => {}
+    config_param :sum_defaults, :array, :default => []
     config_param :metric_maps, :hash, :default => {}
     config_param :metric_defaults, :array, :default => []
 
@@ -35,8 +35,8 @@ module Fluent
         @http_headers = conf.delete('http_headers')
         @metrics_backend = conf.delete('metrics_backend')
         @prefix = conf.delete('prefix')
-        @counter_maps = conf.delete('counter_maps')
-        @counter_defaults = conf.delete('counter_defaults')
+        @sum_maps = conf.delete('sum_maps')
+        @sum_defaults = conf.delete('sum_defaults')
         @metric_maps = conf.delete('metric_maps')
         @metric_defaults = conf.delete('metric_defaults')
       }
@@ -55,8 +55,8 @@ module Fluent
 
       end
 
-      @counter_maps.each do |k,v|
-        @counter_maps[k] = [ v ] unless v.is_a?(Array)
+      @sum_maps.each do |k,v|
+        @sum_maps[k] = [ v ] unless v.is_a?(Array)
       end
 
       @metric_maps.each do |k,v|
@@ -93,46 +93,59 @@ module Fluent
         timestamp = Time.now.to_f
       end
 
-      count_data = {}
+      sum_data = {}
       metric_data = {}
 
       chunk.msgpack_each do |event|
-        @counter_maps.each do |k,v|
-          if eval(k)
-            v.each do |e|
-              begin
-                name = eval(e)
-              rescue Exception
-                name = eval('"'+e+'"')
+        @sum_maps.each do |k,v|
+
+          begin
+            incr = eval(k)
+            if incr.is_a?(Numeric)
+              v.each do |e|
+                begin
+                  name = eval(e)
+                rescue Exception
+                  name = eval('"'+e+'"')
+                end
+                sum_data[name] ||= 0
+                sum_data[name] += incr
               end
-              count_data[name] ||= 0
-              count_data[name] += 1
             end
+          rescue Exception => e
+            log.error "Failed to process sum_map (#{k},#{v}) for event: #{event}: #{e.trace}"
           end
+
         end
 
         @metric_maps.each do |k,v|
-          if eval(k)
-            v.each do |e|
-              val = eval(e)
-              if val.is_a?(Hash) and not val.empty?
-                @metrics_backend.buffer_append_entry(
-                  @base_entry.merge(val),
-                  event['time']
-                )
+
+          begin
+            if eval(k)
+              v.each do |e|
+                val = eval(e)
+                if val.is_a?(Hash) and not val.empty?
+                  @metrics_backend.buffer_append_entry(
+                    @base_entry.merge(val),
+                    event['time']
+                  )
+                end
               end
             end
+          rescue Exception => e
+            log.error "Failed to process metric_map (#{k},#{v}) for event: #{event}: #{e.trace}"
           end
+
         end
 
       end
 
-      @counter_defaults.each do |e|
-        count_data[e['name']] = e['value'] unless count_data.key?(e['name'])
+      @sum_defaults.each do |e|
+        sum_data[e['name']] = e['value'] unless sum_data.key?(e['name'])
       end
 
       @metrics_backend.buffer_append_array_of_hashes(
-        count_data.map {|name,value|
+        sum_data.map {|name,value|
           @base_entry.merge({ 'name' => name, 'value' => value, 'time' => timestamp })
         }
       )
