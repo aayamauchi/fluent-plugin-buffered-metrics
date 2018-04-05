@@ -141,7 +141,9 @@ module Fluent
       end
 
       @sum_defaults.each do |e|
-        sum_data[e['name']] = e['value'] unless sum_data.key?(e['name'])
+        if e.key?('name') and not e['name'].nil? and not e['name'].empty?
+          sum_data[e['name']] = e['value'] unless sum_data.key?(e['name'])
+        end
       end
 
       @metrics_backend.buffer_append_array_of_hashes(
@@ -152,7 +154,9 @@ module Fluent
 
       @metrics_backend.buffer_append_array_of_hashes(
          @metric_defaults.map {|e|
-           @base_entry.merge(e).merge({'time' => timestamp}) unless metric_data.key?(e['name'])
+           if e.key?('name') and not e['name'].nil? and not e['name'].empty?
+             @base_entry.merge(e).merge({'time' => timestamp}) unless metric_data.key?(e['name'])
+          end
          }
       )
 
