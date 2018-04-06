@@ -46,9 +46,9 @@ module Fluent
       unless @prefix.nil?
 
         begin
-          @prefix = eval(@prefix) || eval('"'+@prefix+'"')
-        rescue
-          raise ArgumentError, "Error setting prefix from '#{@prefix}'"
+          @prefix = eval(@prefix)
+        rescue Exception
+          @prefix = eval('"'+@prefix+'"')
         end
 
         @base_entry['prefix'] = @prefix unless @prefix.empty?
