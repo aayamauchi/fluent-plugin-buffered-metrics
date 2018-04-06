@@ -171,7 +171,7 @@ module Fluent
     end
 
     def serialize_entry(entry,time)
-      unless entry.nil? or not entry.key?('name') or not entry.key?('value') or entry['name'].empty? or not entry['value'].is_a?(Numeric)
+      if entry.is_a?(Hash) and entry.key?('name') and entry['name'].is_a?(String) and entry.key?('value') and entry['value'].is_a?(Numeric) and time.is_a?(Numeric)
         return sprintf(
           '%s%s %s %i',
           entry.key?('prefix') ? entry['prefix'] + '.' : '',
@@ -190,7 +190,7 @@ module Fluent
     end
 
     def serialize_entry(entry,time)
-      unless entry.nil? or not entry.key?('name') or not entry.key?('value') or entry['name'].empty? or not entry['value'].is_a?(Numeric)
+      if entry.is_a?(Hash) and entry.key?('name') and entry['name'].is_a?(String) and entry.key?('value') and entry['value'].is_a?(Numeric) and time.is_a?(Numeric)
         return sprintf(
           '%s%s:%s|c',
           entry.key?('prefix') ? entry['prefix'] + '.' : '',
