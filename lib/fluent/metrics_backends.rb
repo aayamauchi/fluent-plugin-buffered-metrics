@@ -171,12 +171,14 @@ module Fluent
     end
 
     def serialize_entry(entry,time)
-      return sprintf(
-        '%s%s %s %i',
-        entry.key?('prefix') ? entry['prefix'] + '.' : '',
-        entry['name'],entry['value'].to_s,
-        time.to_i
-      )
+      unless entry.nil? or not entry.key?('name') or not entry.key?('value') or entry['name'].empty? or not entry['value'].is_a?(Numeric)
+        return sprintf(
+          '%s%s %s %i',
+          entry.key?('prefix') ? entry['prefix'] + '.' : '',
+          entry['name'],entry['value'].to_s,
+          time.to_i
+        )
+      end
     end
 
   end
@@ -188,12 +190,14 @@ module Fluent
     end
 
     def serialize_entry(entry,time)
-      return sprintf(
-        '%s%s:%s|c',
-        entry.key?('prefix') ? entry['prefix'] + '.' : '',
-        entry['name'],
-        entry['value'].to_i
-      )
+      unless entry.nil? or not entry.key?('name') or not entry.key?('value') or entry['name'].empty? or not entry['value'].is_a?(Numeric)
+        return sprintf(
+          '%s%s:%s|c',
+          entry.key?('prefix') ? entry['prefix'] + '.' : '',
+          entry['name'],
+          entry['value'].to_i
+        )
+      end
     end
 
   end
