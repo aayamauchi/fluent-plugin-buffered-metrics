@@ -57,7 +57,7 @@ Note that the following is at test configuration, appending to a file on the loc
     prefix fluentd.<hostname>.5m
     #url tcp://localhost:2003
     url file:///var/tmp/graphite_test.out
-    sum_defaults [{"-.-.-.count":0},{"-.-.-.bytes":0}]
+    sum_defaults [{"name":"-.-.-.count","value":0},{"name":"-.-.-.bytes","value":0}]
     sum_maps {"event['record'].empty? ? false : 1":["-.-.-.count","(['tag','facility','level'].map {|t| event['record'][t] || '-'}+['count']).join('.')"],"event['record'].empty? ? false : event.to_s.length":["-.-.-.bytes","(['tag','facility','level'].map {|t| event['record'][t] || '-'}+['bytes']).join('.')"]}
     metric_maps {}
     metric_defaults []
@@ -106,10 +106,12 @@ So, even though there is only one event matching condition, two distinct metrics
 ```JSON
   [
      {
-        "-.-.-.count" : 0
+        "name": "-.-.-.count",
+        "value": 0
      },
      {
-        "-.-.-.bytes" : 0
+        "name": "-.-.-.bytes",
+        "value": 0
      }
   ]
 ```

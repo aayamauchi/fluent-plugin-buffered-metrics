@@ -46,9 +46,9 @@ module Fluent
       unless @prefix.nil?
 
         begin
-          @prefix = eval(@prefix) || eval('"'+@prefix+'"')
-        rescue
-          raise ArgumentError, "Error setting prefix from '#{@prefix}'"
+          @prefix = eval(@prefix)
+        rescue Exception
+          @prefix = eval('"'+@prefix+'"')
         end
 
         @base_entry['prefix'] = @prefix unless @prefix.empty?
@@ -141,9 +141,7 @@ module Fluent
       end
 
       @sum_defaults.each do |e|
-        if e.key?('name') and not e['name'].nil? and not e['name'].empty?
-          sum_data[e['name']] = e['value'] unless sum_data.key?(e['name'])
-        end
+        sum_data[e['name']] = e['value'] unless sum_data.key?(e['name'])
       end
 
       @metrics_backend.buffer_append_array_of_hashes(
@@ -154,9 +152,7 @@ module Fluent
 
       @metrics_backend.buffer_append_array_of_hashes(
          @metric_defaults.map {|e|
-           if e.key?('name') and not e['name'].nil? and not e['name'].empty?
-             @base_entry.merge(e).merge({'time' => timestamp}) unless metric_data.key?(e['name'])
-          end
+           @base_entry.merge(e).merge({'time' => timestamp}) unless metric_data.key?(e['name'])
          }
       )
 
